@@ -1,0 +1,136 @@
+esphome:
+  name: led_controller
+  friendly_name: LED Controller
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: arduino
+
+logger:
+
+api:
+
+ota:
+  platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+# =========================
+# PWM OUTPUTS
+# =========================
+output:
+  - platform: ledc
+    pin: GPIO7
+    id: cold_pwm
+    frequency: 5000 Hz
+  - platform: ledc
+    pin: GPIO10
+    id: warm_pwm
+    frequency: 5000 Hz
+
+# =========================
+# CCT LIGHT
+# =========================
+light:
+  - platform: cwww
+    name: "Monitor Light"
+    id: monitor_light
+    cold_white: cold_pwm
+    warm_white: warm_pwm
+    cold_white_color_temperature: 6500 K
+    warm_white_color_temperature: 3000 K
+    constant_brightness: true
+    gamma_correct: 2.2
+    default_transition_length: 0.2s
+    restore_mode: RESTORE_DEFAULT_OFF
+    
+# =========================
+# GLOBAL STATE
+# =========================
+globals:
+  - id: adjust_mode
+    type: bool
+    restore_value: yes
+    initial_value: "false"
+    # false = brightness, true = color temperature
+    
+# =========================
+# ROTARY ENCODER
+# =========================
+sensor:
+  - platform: rotary_encoder
+    id: encoder
+    pin_a: GPIO3
+    pin_b: GPIO1
+    resolution: 2
+    
+    on_clockwise:
+      then:
+       - lambda: |-
+          auto call = id(monitor_light).make_call();
+
+          if (!id(adjust_mode)) {
+            float current =              id(monitor_light).remote_values.get_brightness();
+            // Exponential increase
+            float new_value = current * 1.12f;
+            if (new_value < 0.02f) new_value = 0.02f;
+            if (new_value > 1.0f) new_value = 1.0f;
+            call.set_brightness(new_value);
+          } else {
+             float current =     id(monitor_light).remote_values.get_color_temperature();
+             float min_ct = id(monitor_light).get_traits().get_min_mireds();
+             float max_ct = id(monitor_light).get_traits().get_max_mireds();
+             float new_value = clamp(current - 20.0f, min_ct, max_ct);
+             call.set_color_temperature(new_value);
+           }
+
+             call.perform();
+
+    on_anticlockwise:
+      then:
+       - lambda: |-
+          auto call = id(monitor_light).make_call();
+
+          if (!id(adjust_mode)) {
+            float current =      id(monitor_light).remote_values.get_brightness();
+            // Exponential decrease
+            float new_value = current / 1.12f;
+            if (new_value < 0.01f) new_value = 0.01f;
+            if (new_value > 1.0f) new_value = 1.0f;
+            call.set_brightness(new_value);
+          } else {
+            float current = id(monitor_light).remote_values.get_color_temperature();
+            float min_ct = id(monitor_light).get_traits().get_min_mireds();
+            float max_ct = id(monitor_light).get_traits().get_max_mireds();
+            float new_value = clamp(current + 20.0f, min_ct, max_ct);
+            call.set_color_temperature(new_value);
+           }
+
+            call.perform();
+# =========================
+# ENCODER BUTTON
+# =========================
+binary_sensor:
+  - platform: gpio
+    pin:
+    number: GPIO4
+    mode: INPUT_PULLUP
+    inverted: true
+    name: "Encoder Button"
+    on_multi_click:
+    # SHORT PRESS
+      - timing:
+         - ON for 50ms to 500ms
+         - OFF for at least 50ms
+        then:
+         - lambda: |-
+             id(adjust_mode) = !id(adjust_mode);
+             ESP_LOGI("encoder", "Mode: %s",
+             id(adjust_mode) ? "Color Temp" : "Brightness");
+    # LONG PRESS
+       - timing:
+         - ON for at least 800ms
+       then:
+         - light.toggle: monitor_light
