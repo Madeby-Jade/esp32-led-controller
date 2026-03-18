@@ -67,7 +67,7 @@ Supports:
 1. Install ESPHome
 2. Open:
    ```
-   esphome/led-controller.yaml
+   firmware/esphome/led-controller.yaml
    ```
 3. Update:
    - Wi-Fi credentials
